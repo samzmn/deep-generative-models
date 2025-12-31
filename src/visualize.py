@@ -34,9 +34,9 @@ def plot_multiple_images(images, n_cols=None, save_path: str | None = None):
         dir_path = os.path.dirname(save_path)
         save_fig(file_name, Path(dir_path), fig_extension=file_extension)
 
-def generate_new_images(generator, codings_dim, device, n_images = 3 * 7):
+def generate_new_images(generator: torch.nn.Module, sampler, codings_dim, device, n_images = 4 * 8, save_path: str | None = None):
     generator.eval()
-    codings = torch.randn(n_images, codings_dim, device=device)
+    codings = sampler(n_images, codings_dim).to(device)
     with torch.no_grad():
         generated_images = generator(codings)
-    plot_multiple_images(generated_images, 7)
+    plot_multiple_images(generated_images, 8, save_path=save_path)

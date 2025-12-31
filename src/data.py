@@ -14,7 +14,7 @@ class GANDataset(Dataset):
         x, _ = self.base_dataset[idx]
         return x
 
-def load_fashion_mnist(batch_size = 32, shuffle = True, seed = 42) -> DataLoader:
+def load_fashion_mnist(batch_size = 32, shuffle = True, seed = None) -> DataLoader:
     """
     This is a dataset of 70,000 1x28x28 grayscale images of 10 fashion categories.
 
@@ -31,6 +31,9 @@ def load_fashion_mnist(batch_size = 32, shuffle = True, seed = 42) -> DataLoader
     8	Bag
     9	Ankle boot
     """
+    if seed is not None:
+        torch.manual_seed(seed)
+        
     toTensor = T.Compose([T.ToImage(), T.ToDtype(torch.float32, scale=True)])
 
     train_data = torchvision.datasets.FashionMNIST(
@@ -41,11 +44,11 @@ def load_fashion_mnist(batch_size = 32, shuffle = True, seed = 42) -> DataLoader
     entire_data = torch.utils.data.ConcatDataset([train_data, test_data])
 
     data_loader = DataLoader(GANDataset(entire_data), batch_size=batch_size,
-                            shuffle=shuffle)
+                            shuffle=shuffle, num_workers=2, prefetch_factor=2, persistent_workers=True)
 
     return data_loader
 
-def load_cifar10(batch_size = 32, shuffle = True, seed = 42) -> DataLoader:
+def load_cifar10(batch_size = 32, shuffle = True, seed = None) -> DataLoader:
     """
     This is a dataset of 60,000 3x32x32 color training images, labeled over 10 categories. See more info at the CIFAR homepage.
 
@@ -62,6 +65,8 @@ def load_cifar10(batch_size = 32, shuffle = True, seed = 42) -> DataLoader:
     8	ship
     9	truck
     """
+    if seed is not None:
+        torch.manual_seed(seed)
     toTensor = T.Compose([T.ToImage(), T.ToDtype(torch.float32, scale=True)])
 
     train_data = torchvision.datasets.CIFAR10(
@@ -72,7 +77,7 @@ def load_cifar10(batch_size = 32, shuffle = True, seed = 42) -> DataLoader:
     entire_data = torch.utils.data.ConcatDataset([train_data, test_data])
 
     data_loader = DataLoader(GANDataset(entire_data), batch_size=batch_size,
-                            shuffle=shuffle)
+                            shuffle=shuffle, num_workers=2, prefetch_factor=2, persistent_workers=True)
 
     return data_loader
 

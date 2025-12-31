@@ -14,45 +14,6 @@ import matplotlib.pyplot as plt
 from visualize import plot_multiple_images
 from utils import save_checkpoint, normal_noise_sampler, default_device
 
-            
-def train_gan(generator, discriminator, train_loader, codings_dim, n_epochs=20,
-              g_lr=1e-3, d_lr=5e-4, device="cuda"):
-    criterion = nn.BCELoss()
-    generator_opt = torch.optim.NAdam(generator.parameters(), lr=g_lr)
-    discriminator_opt = torch.optim.NAdam(discriminator.parameters(), lr=d_lr)
-    for epoch in range(n_epochs):
-        print(f"Epoch {epoch + 1}/{n_epochs}", end="")
-        for real_images, _ in train_loader:
-            real_images = real_images.to(device)
-            pred_real = discriminator(real_images)
-            batch_size = real_images.size(0)
-            ones = torch.ones(batch_size, 1, device=device)
-            real_loss = criterion(pred_real, ones)
-            codings = torch.randn(batch_size, codings_dim, device=device)
-            fake_images = generator(codings).detach()
-            pred_fake = discriminator(fake_images)
-            zeros = torch.zeros(batch_size, 1, device=device)
-            fake_loss = criterion(pred_fake, zeros)
-            discriminator_loss = real_loss + fake_loss
-            discriminator_opt.zero_grad()
-            discriminator_loss.backward()
-            discriminator_opt.step()
-
-            codings = torch.randn(batch_size, codings_dim, device=device)
-            fake_images = generator(codings)
-            for p in discriminator.parameters():
-                p.requires_grad = False
-            pred_fake = discriminator(fake_images)
-            generator_loss = criterion(pred_fake, ones)
-            generator_opt.zero_grad()
-            generator_loss.backward()
-            generator_opt.step()
-            for p in discriminator.parameters():
-                p.requires_grad = True
-        print(f" | discriminator loss: {discriminator_loss.item():.4f}", end="")
-        print(f" | generator loss: {generator_loss.item():.4f}")
-        if epoch % 10 == 0 or epoch == n_epochs - 1:
-            plot_multiple_images(fake_images.detach(), 8)
 
 @dataclass
 class EarlyStoppingConfig:
@@ -137,9 +98,10 @@ class GANTrainer:
 
         os.makedirs(self.cfg.out_dir, exist_ok=True)
         os.makedirs(os.path.join(self.cfg.out_dir, "logs"), exist_ok=True)
-        os.makedirs(os.path.join(self.cfg.out_dir, "images"), exist_ok=True)
+        os.makedirs(os.path.join(self.cfg.out_dir, "images", f"{self.model_name}_{self.dataset_name}"), exist_ok=True)
         os.makedirs(os.path.join(self.cfg.out_dir, "ckpts"), exist_ok=True)
         os.makedirs(os.path.join(self.cfg.out_dir, "runs"), exist_ok=True)
+        self.ckpt_path = None
 
         # Tracking
         self.history = {
@@ -176,12 +138,12 @@ class GANTrainer:
 
     def _save_checkpoint(self, epoch: int):
         if self.cfg.save_best_only:
-            save_path = os.path.join(self.cfg.out_dir, "ckpts", 
+            self.ckpt_path = os.path.join(self.cfg.out_dir, "ckpts", 
                                  f"{self.model_name}_{self.dataset_name}_best.pt")
         else:
-            save_path = os.path.join(self.cfg.out_dir, "ckpts", 
+            self.ckpt_path = os.path.join(self.cfg.out_dir, "ckpts", 
                                     f"{self.model_name}_{self.dataset_name}_epoch_{epoch}.pt")
-        save_checkpoint(save_path, epoch, self.G, self.D,
+        save_checkpoint(self.ckpt_path, epoch, self.G, self.D,
                         self.g_opt, self.d_opt)
 
     def _plot_curves(self):
@@ -304,7 +266,7 @@ class GANTrainer:
             # save generated images
             if self.cfg.plot_every_n_epochs and epoch % self.cfg.plot_every_n_epochs == 0:
                 plot_multiple_images(gen_imgs.detach(), 8, os.path.join(
-                    self.cfg.out_dir, "images", f"{self.model_name}_{self.dataset_name}_epoch_{epoch}.png"
+                    self.cfg.out_dir, "images", f"{self.model_name}_{self.dataset_name}", f"epoch_{epoch}.png"
                 ))
 
             # Early stopping / best checkpoint
@@ -332,5 +294,5 @@ class GANTrainer:
             "history": self.history,
             "best_epoch": self.best_epoch,
             "best_metric": self.best_metric,
-            "checkpoint_path": os.path.join(self.cfg.out_dir, "best.pt") if self.best_epoch > 0 else None
+            "checkpoint_path": self.ckpt_path if self.best_epoch > 0 else None
         }
