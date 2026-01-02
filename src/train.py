@@ -69,14 +69,12 @@ class GANTrainer:
         d_optimizer: Optimizer,
         train_dataloader: DataLoader,
         dataset_name: str,
-        noise_sampler: Callable[[int], torch.Tensor] | Any = normal_noise_sampler,  # returns latent z (and optionally cond)
+        noise_sampler: Callable[[int, int], torch.Tensor] | Any = normal_noise_sampler,  # returns latent z (and optionally cond)
         g_scheduler: Optional[LRScheduler] = None,   # torch.optim.lr_scheduler.LRScheduler
         d_scheduler: Optional[LRScheduler] = None,
         trainer_cfg: TrainerConfig = TrainerConfig(epochs=50, device=torch.device("cuda"), out_dir="./runs"),
         early_stopping: Optional[EarlyStoppingConfig] = EarlyStoppingConfig(),
-        condition_sampler: Optional[Callable[[torch.Tensor, int], Dict[str, torch.Tensor]]] = None,
-        # condition_sampler(z, batch_size) -> dict of conditioning tensors (e.g., class labels) for G
-        # The dict is passed to G(**cond) or merged with input as needed by your model forward signature.
+        num_classes: Optional[int] = None, # must be set for conditional GANs
     ):
         self.G = generator.to(trainer_cfg.device)
         self.D = discriminator.to(trainer_cfg.device)
@@ -90,9 +88,9 @@ class GANTrainer:
         self.train_dl = train_dataloader
         self.dataset_name = dataset_name
         self.noise_sampler = noise_sampler
-        self.condition_sampler = condition_sampler
         self.cfg = trainer_cfg
         self.es = early_stopping
+        self.num_classes = num_classes
 
         if self.cfg.seed is not None:
             torch.manual_seed(self.cfg.seed)
@@ -165,6 +163,8 @@ class GANTrainer:
 
     def train(self):
         device = self.cfg.device
+        fixed_z = self.noise_sampler(64, self.codings_dim).to(device)
+        fixed_labels = torch.randint(0, self.num_classes, (64,), device=device) if self.num_classes is not None else None
 
         for epoch in range(1, self.cfg.epochs + 1):
             epoch_start = time.time()
@@ -188,15 +188,14 @@ class GANTrainer:
                 # Train Discriminator
                 self.d_opt.zero_grad(set_to_none=True)
                 codings = self.noise_sampler(batch_size, self.codings_dim).to(device)
-                cond_kwargs = {}
-                if self.condition_sampler is not None:
-                    cond_kwargs = self.condition_sampler(codings, batch_size)
-                fake_imgs = self.G(codings, **cond_kwargs).detach()  # stop gradients to G for D step
+                fake_imgs = self.G(codings).detach() if labels is None else self.G(codings, labels).detach()  # stop gradients to G for D step
 
                 pred_real = self.D(real_imgs) if labels is None else self.D(real_imgs, labels)
                 pred_fake = self.D(fake_imgs) if labels is None else self.D(fake_imgs, labels)
-                ones = torch.ones(batch_size, 1, device=device)
-                zeros = torch.zeros(batch_size, 1, device=device)
+                # ones = torch.ones(batch_size, 1, device=device)
+                # zeros = torch.zeros(batch_size, 1, device=device)
+                ones = torch.empty(batch_size, 1, device=device).uniform_(0.9, 1.0)
+                zeros = torch.empty(batch_size, 1, device=device).uniform_(0.0, 0.1)
 
                 d_loss = self.criterion(pred_real, ones) + self.criterion(pred_fake, zeros)
                 d_loss.backward()
@@ -209,10 +208,7 @@ class GANTrainer:
                 # Train Generator
                 self.g_opt.zero_grad(set_to_none=True)
                 codings = self.noise_sampler(batch_size, self.codings_dim).to(device)
-                cond_kwargs = {}
-                if self.condition_sampler is not None:
-                    cond_kwargs = self.condition_sampler(codings, batch_size)
-                gen_imgs = self.G(codings, **cond_kwargs)
+                gen_imgs = self.G(codings) if labels is None else self.G(codings, labels)
                 for p in self.D.parameters():
                     p.requires_grad = False
                 d_pred = self.D(gen_imgs) if labels is None else self.D(gen_imgs, labels)
@@ -277,7 +273,9 @@ class GANTrainer:
 
             # save generated images
             if self.cfg.plot_every_n_epochs and epoch % self.cfg.plot_every_n_epochs == 0:
-                plot_multiple_images(gen_imgs.detach(), 8, os.path.join(
+                with torch.no_grad():
+                    samples = self.G(fixed_z) if fixed_labels is None else self.G(fixed_z, fixed_labels)
+                plot_multiple_images(samples, 8, os.path.join(
                     self.cfg.out_dir, "images", f"{self.model_name}_{self.dataset_name}", f"epoch_{epoch}.png"
                 ))
 
