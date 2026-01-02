@@ -34,13 +34,17 @@ def load_fashion_mnist(batch_size = 32, shuffle = True, seed = None) -> DataLoad
     if seed is not None:
         torch.manual_seed(seed)
         
-    toTensor = T.Compose([T.ToImage(), T.ToDtype(torch.float32, scale=True)])
+    toTensor = T.Compose([
+        T.ToImage(),
+        T.ToDtype(torch.float32, scale=True), # scales to [0, 1]
+        T.Normalize(mean=[0.5], std=[0.5]) # (x - 0.5) / 0.5 → [-1, 1]
+    ])
 
     train_data = torchvision.datasets.FashionMNIST(
         root="datasets", train=True, download=True, transform=toTensor)
     test_data = torchvision.datasets.FashionMNIST(
         root="datasets", train=False, download=True, transform=toTensor)
-    
+
     entire_data = torch.utils.data.ConcatDataset([train_data, test_data])
 
     data_loader = DataLoader(GANDataset(entire_data), batch_size=batch_size,

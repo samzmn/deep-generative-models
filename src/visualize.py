@@ -18,7 +18,23 @@ def save_fig(fig_id, base_path: Path, tight_layout=True, fig_extension="png", re
     plt.savefig(path, format=fig_extension, dpi=resolution)
 
 def plot_image(image):
-    plt.imshow(image.permute(1, 2, 0).cpu(), cmap="binary")
+    # plt.imshow(image.permute(1, 2, 0).cpu(), cmap="binary")
+    img = image.detach().cpu() 
+    # Detect range 
+    min_val, max_val = img.min().item(), img.max().item() 
+    # Case 1: [-1, 1] → rescale to [0, 1] 
+    if min_val < 0: 
+        img = (img + 1) / 2 
+    # Case 2: [0, 1] → already fine 
+    # Case 3: [0, 255] → convert to [0, 1] 
+    elif max_val > 1: 
+        img = img / 255.0 
+    # Handle grayscale vs RGB 
+    if img.shape[0] == 1: 
+        img = img.squeeze(0) 
+        plt.imshow(img, cmap="binary") 
+    else: 
+        plt.imshow(img.permute(1, 2, 0))
     plt.axis("off")
 
 def plot_multiple_images(images, n_cols=None, save_path: str | None = None):

@@ -5,18 +5,12 @@ from torch import nn
 from torch.optim import Optimizer
 
 
-def linear_relu_init_weights(module: nn.Module, relu_slope=0.0):
-    if isinstance(module, nn.Linear):
+def init_weights_for_relu(module: nn.Module, relu_slope=0.0):
+    if isinstance(module, nn.Linear) or isinstance(module, nn.Conv2d) or isinstance(module, nn.ConvTranspose2d):
         nn.init.kaiming_uniform_(module.weight, a=relu_slope, nonlinearity='leaky_relu')
         if module.bias is not None:
             nn.init.zeros_(module.bias)
 
-
-def conv_relu_init_weights(module: nn.Module, relu_slope=0.0):
-    if isinstance(module, nn.Conv2d) or isinstance(module, nn.ConvTranspose2d):
-        nn.init.kaiming_uniform_(module.weight, a=relu_slope, nonlinearity='leaky_relu')
-        if module.bias is not None:
-            nn.init.zeros_(module.bias)
 
 def normal_noise_sampler(batch_size, codings_dim=128) -> torch.Tensor:
     return torch.randn(batch_size, codings_dim)

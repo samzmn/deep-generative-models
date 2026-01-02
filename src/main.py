@@ -45,8 +45,8 @@ def train_fashion_deep_convolutional_gan(batch_size = 64, codings_dim = 100, g_l
 
 
 def main():
-    # train_fashion_simple_gan()
-    train_fashion_deep_convolutional_gan()
+    train_fashion_simple_gan()
+    # train_fashion_deep_convolutional_gan()
 
 if __name__ == "__main__":
     main()
