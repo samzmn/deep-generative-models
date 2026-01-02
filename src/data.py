@@ -14,7 +14,18 @@ class GANDataset(Dataset):
         x, _ = self.base_dataset[idx]
         return x
 
-def load_fashion_mnist(batch_size = 32, shuffle = True, seed = None) -> DataLoader:
+class ConditionalGANDataset(Dataset):
+    def __init__(self, base_dataset):
+        self.base_dataset = base_dataset
+
+    def __len__(self):
+        return len(self.base_dataset)
+
+    def __getitem__(self, idx):
+        x, y = self.base_dataset[idx]
+        return x, y
+
+def load_fashion_mnist(batch_size = 32, shuffle = True, normal=True, conditional=False, seed = None) -> DataLoader:
     """
     This is a dataset of 70,000 1x28x28 grayscale images of 10 fashion categories.
 
@@ -34,11 +45,15 @@ def load_fashion_mnist(batch_size = 32, shuffle = True, seed = None) -> DataLoad
     if seed is not None:
         torch.manual_seed(seed)
         
-    toTensor = T.Compose([
+    base = [
         T.ToImage(),
-        T.ToDtype(torch.float32, scale=True), # scales to [0, 1]
-        T.Normalize(mean=[0.5], std=[0.5]) # (x - 0.5) / 0.5 → [-1, 1]
-    ])
+        T.ToDtype(torch.float32, scale=True),  # scales to [0, 1]
+    ]
+
+    if normal:
+        base.append(T.Normalize([0.5], [0.5]))  # (x - 0.5) / 0.5 → [-1, 1]
+
+    toTensor = T.Compose(base)
 
     train_data = torchvision.datasets.FashionMNIST(
         root="datasets", train=True, download=True, transform=toTensor)
@@ -47,12 +62,16 @@ def load_fashion_mnist(batch_size = 32, shuffle = True, seed = None) -> DataLoad
 
     entire_data = torch.utils.data.ConcatDataset([train_data, test_data])
 
-    data_loader = DataLoader(GANDataset(entire_data), batch_size=batch_size,
-                            shuffle=shuffle, num_workers=2, prefetch_factor=2, persistent_workers=True)
+    if conditional:
+        data_loader = DataLoader(ConditionalGANDataset(entire_data), batch_size=batch_size,
+                                shuffle=shuffle, num_workers=2, prefetch_factor=2, persistent_workers=True)
+    else:
+        data_loader = DataLoader(GANDataset(entire_data), batch_size=batch_size,
+                                shuffle=shuffle, num_workers=2, prefetch_factor=2, persistent_workers=True)
 
     return data_loader
 
-def load_cifar10(batch_size = 32, shuffle = True, seed = None) -> DataLoader:
+def load_cifar10(batch_size = 32, shuffle = True, normal=True, conditional=False, seed = None) -> DataLoader:
     """
     This is a dataset of 60,000 3x32x32 color training images, labeled over 10 categories. See more info at the CIFAR homepage.
 
@@ -71,7 +90,16 @@ def load_cifar10(batch_size = 32, shuffle = True, seed = None) -> DataLoader:
     """
     if seed is not None:
         torch.manual_seed(seed)
-    toTensor = T.Compose([T.ToImage(), T.ToDtype(torch.float32, scale=True)])
+    
+    base = [
+        T.ToImage(),
+        T.ToDtype(torch.float32, scale=True),  # scales to [0, 1]
+    ]
+
+    if normal:
+        base.append(T.Normalize([0.5, 0.5, 0.5], [0.5, 0.5, 0.5]))  # (x - 0.5) / 0.5 → [-1, 1]
+
+    toTensor = T.Compose(base)
 
     train_data = torchvision.datasets.CIFAR10(
         root="datasets", train=True, download=True, transform=toTensor)
@@ -80,15 +108,19 @@ def load_cifar10(batch_size = 32, shuffle = True, seed = None) -> DataLoader:
     
     entire_data = torch.utils.data.ConcatDataset([train_data, test_data])
 
-    data_loader = DataLoader(GANDataset(entire_data), batch_size=batch_size,
-                            shuffle=shuffle, num_workers=2, prefetch_factor=2, persistent_workers=True)
+    if conditional:
+        data_loader = DataLoader(ConditionalGANDataset(entire_data), batch_size=batch_size,
+                                shuffle=shuffle, num_workers=2, prefetch_factor=2, persistent_workers=True)
+    else:
+        data_loader = DataLoader(GANDataset(entire_data), batch_size=batch_size,
+                                shuffle=shuffle, num_workers=2, prefetch_factor=2, persistent_workers=True)
 
     return data_loader
 
 if __name__=="__main__":
     data_loader = load_fashion_mnist()
     print(len(data_loader))
-    for x_bath in data_loader:
-        print(x_bath.shape)
+    for x_bath, y_batch in data_loader:
+        print(x_bath.shape, y_batch.shape)
         print(torch.max(x_bath), torch.min(x_bath))
         break
