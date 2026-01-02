@@ -9,6 +9,7 @@ import torch.nn as nn
 from torch.optim import Optimizer
 from torch.utils.data import DataLoader
 from torch.optim.lr_scheduler import LRScheduler
+from torch.utils.tensorboard import SummaryWriter
 import matplotlib.pyplot as plt
 
 from visualize import plot_multiple_images
@@ -29,6 +30,7 @@ class TrainerConfig:
     out_dir: str
     epochs: int = 100
     device: torch.device = default_device()
+    use_tensorboard: bool = True
     log_every_n_steps: Optional[int] = 100
     plot_every_n_epochs: Optional[int] = 1
     save_best_only: bool = True
@@ -100,8 +102,11 @@ class GANTrainer:
         os.makedirs(os.path.join(self.cfg.out_dir, "logs"), exist_ok=True)
         os.makedirs(os.path.join(self.cfg.out_dir, "images", f"{self.model_name}_{self.dataset_name}"), exist_ok=True)
         os.makedirs(os.path.join(self.cfg.out_dir, "ckpts"), exist_ok=True)
-        os.makedirs(os.path.join(self.cfg.out_dir, "runs"), exist_ok=True)
+        os.makedirs(os.path.join(self.cfg.out_dir, "runs", f"{self.model_name}_{self.dataset_name}"), exist_ok=True)
         self.ckpt_path = None
+        self.writer = None
+        if self.cfg.use_tensorboard:
+            self.writer = SummaryWriter(os.path.join(self.cfg.out_dir, "runs", f"{self.model_name}_{self.dataset_name}"))
 
         # Tracking
         self.history = {
@@ -248,6 +253,13 @@ class GANTrainer:
             self.history["g_lr"].append(g_lr)
             self.history["d_lr"].append(d_lr)
 
+            # TensorBoard logging
+            if self.writer:
+                self.writer.add_scalar("Loss/G", g_epoch_loss, epoch)
+                self.writer.add_scalar("Loss/D", d_epoch_loss, epoch)
+                self.writer.add_scalar("LR/G", g_lr, epoch)
+                self.writer.add_scalar("LR/D", d_lr, epoch)
+
             # CSV logging
             self.csv_logger.log_row({
                 "epoch": epoch,
@@ -289,6 +301,8 @@ class GANTrainer:
 
         # Finalize
         self._plot_curves()
+        if self.writer:
+            self.writer.close()
 
         return {
             "history": self.history,
