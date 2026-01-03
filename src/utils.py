@@ -1,4 +1,6 @@
-from typing import Dict, Optional, Any
+import random
+from collections import deque
+from typing import Dict, Optional, Any, Tuple, List
 
 import torch
 from torch import nn
@@ -69,3 +71,114 @@ class SeparableConv2d(nn.Module):
 
     def forward(self, inputs):
         return self.pointwise_conv(self.depthwise_conv(inputs))
+
+
+class GANReplayBuffer:
+    """
+    Experience replay buffer for GAN fake samples.
+    Stores (image, label) pairs if conditional, else just images.
+    """
+    def __init__(self, max_size: int = 5000):
+        assert max_size > 0
+        self.max_size = max_size
+        self.images = deque(maxlen=max_size)
+        self.labels = deque(maxlen=max_size)
+
+    def __len__(self):
+        return len(self.images)
+
+    def add(self, imgs: torch.Tensor, labels: Optional[torch.Tensor] = None):
+        imgs = imgs.detach().cpu()
+        if labels is not None:
+            labels = labels.detach().cpu()
+
+        for i in range(imgs.size(0)):
+            self.images.append(imgs[i])
+            if labels is not None:
+                self.labels.append(labels[i])
+
+    def sample(
+        self,
+        batch_size: int,
+        device: torch.device
+    ) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
+        assert len(self.images) > 0
+
+        idxs = random.sample(range(len(self.images)), k=min(batch_size, len(self.images)))
+        imgs = torch.stack([self.images[i] for i in idxs]).to(device)
+
+        if len(self.labels) > 0:
+            labels = torch.stack([self.labels[i] for i in idxs]).to(device)
+        else:
+            labels = None
+
+        return imgs, labels
+
+
+class GANProbabilisticReplayBuffer:
+    """
+    Probabilistic replay buffer (CycleGAN-style).
+    """
+    def __init__(self, max_size: int = 5000, replace_prob: float = 0.5):
+        assert max_size > 0
+        self.max_size = max_size
+        self.replace_prob = replace_prob
+        self.images: List[torch.Tensor] = []
+        self.labels: List[torch.Tensor] = []
+
+    def __len__(self):
+        return len(self.images)
+
+    def push_and_sample(
+        self,
+        imgs: torch.Tensor,
+        labels: Optional[torch.Tensor],
+        device: torch.device
+    ) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
+        """
+        Push new fake images and return a batch for discriminator training.
+        Returned batch is a mixture of new and historical samples.
+        """
+        out_imgs = []
+        out_labels = [] if labels is not None else None
+
+        imgs = imgs.detach().cpu()
+        if labels is not None:
+            labels = labels.detach().cpu()
+
+        for i in range(imgs.size(0)):
+            img = imgs[i]
+            lbl = labels[i] if labels is not None else None
+
+            if len(self.images) < self.max_size:
+                # Buffer not full: store and use current sample
+                self.images.append(img)
+                if lbl is not None:
+                    self.labels.append(lbl)
+                out_imgs.append(img)
+                if lbl is not None:
+                    out_labels.append(lbl)
+            else:
+                if random.random() < self.replace_prob:
+                    # Replace a random old sample
+                    idx = random.randint(0, self.max_size - 1)
+                    old_img = self.images[idx]
+                    old_lbl = self.labels[idx] if lbl is not None else None
+
+                    self.images[idx] = img
+                    if lbl is not None:
+                        self.labels[idx] = lbl
+
+                    out_imgs.append(old_img)
+                    if lbl is not None:
+                        out_labels.append(old_lbl)
+                else:
+                    # Use current sample, do not store
+                    out_imgs.append(img)
+                    if lbl is not None:
+                        out_labels.append(lbl)
+
+        out_imgs = torch.stack(out_imgs).to(device)
+        out_labels = torch.stack(out_labels).to(device) if out_labels is not None else None
+
+        return out_imgs, out_labels

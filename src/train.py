@@ -13,7 +13,7 @@ from torch.utils.tensorboard import SummaryWriter
 import matplotlib.pyplot as plt
 
 from visualize import plot_multiple_images
-from utils import save_checkpoint, normal_noise_sampler, default_device
+from utils import save_checkpoint, normal_noise_sampler, default_device, GANReplayBuffer
 
 
 @dataclass
@@ -23,6 +23,7 @@ class EarlyStoppingConfig:
     mode: str = "min"                # 'min' or 'max' (depending on metric)
     min_delta: float = 0.0           # minimum change to qualify as improvement
     start_from_epoch: int = 0        # ignore early stopping before this epoch
+    save_best_only: bool = True      # if True, only save best checkpoint, else save every epoch
 
 
 @dataclass
@@ -33,9 +34,11 @@ class TrainerConfig:
     use_tensorboard: bool = True
     log_every_n_steps: Optional[int] = 100
     plot_every_n_epochs: Optional[int] = 1
-    save_best_only: bool = True
+    use_replay_buffer: bool = False,
+    replay_buffer_size: int = 10_000,
+    replay_ratio: float = 1.0,  # fraction of fake batch from buffer
     clip_grad_norm: Optional[float] = None
-    seed: Optional[int] = None       # set for reproducibility
+    seed: Optional[int] = None
 
 
 class CSVLogger:
@@ -92,6 +95,9 @@ class GANTrainer:
         self.es = early_stopping
         self.num_classes = num_classes
 
+        if self.cfg.use_replay_buffer:
+            self.replay_buffer = GANReplayBuffer(max_size=self.cfg.replay_buffer_size)
+
         if self.cfg.seed is not None:
             torch.manual_seed(self.cfg.seed)
             torch.cuda.manual_seed_all(self.cfg.seed)
@@ -140,7 +146,7 @@ class GANTrainer:
         return g_lr, d_lr
 
     def _save_checkpoint(self, epoch: int):
-        if self.cfg.save_best_only:
+        if self.es.save_best_only:
             self.ckpt_path = os.path.join(self.cfg.out_dir, "ckpts", 
                                  f"{self.model_name}_{self.dataset_name}_best.pt")
         else:
@@ -185,10 +191,29 @@ class GANTrainer:
                     labels = None
                     batch_size = real_imgs.size(0)
 
+                #---------------------
                 # Train Discriminator
+                #---------------------
                 self.d_opt.zero_grad(set_to_none=True)
                 codings = self.noise_sampler(batch_size, self.codings_dim).to(device)
                 fake_imgs = self.G(codings).detach() if labels is None else self.G(codings, labels).detach()  # stop gradients to G for D step
+                # Use replay buffer if enabled
+                if self.cfg.use_replay_buffer:
+                    # Add current fake images to buffer
+                    self.replay_buffer.add(fake_imgs, labels)
+
+                    # Sample from buffer
+                    replay_bs = int(batch_size * self.cfg.replay_ratio)
+                    fresh_bs = batch_size - replay_bs
+
+                    replay_imgs, replay_labels = self.replay_buffer.sample(replay_bs, device)
+                    fresh_imgs = fake_imgs[:fresh_bs]
+
+                    fake_imgs = torch.cat([fresh_imgs, replay_imgs], dim=0)
+                    if labels is not None:
+                        labels = torch.cat([labels[:fresh_bs], replay_labels], dim=0)
+                    else:
+                        labels = None
 
                 pred_real = self.D(real_imgs) if labels is None else self.D(real_imgs, labels)
                 pred_fake = self.D(fake_imgs) if labels is None else self.D(fake_imgs, labels)
@@ -205,7 +230,9 @@ class GANTrainer:
 
                 self.d_opt.step()
 
+                #---------------------
                 # Train Generator
+                #---------------------
                 self.g_opt.zero_grad(set_to_none=True)
                 codings = self.noise_sampler(batch_size, self.codings_dim).to(device)
                 gen_imgs = self.G(codings) if labels is None else self.G(codings, labels)
@@ -255,6 +282,8 @@ class GANTrainer:
                 self.writer.add_scalar("Loss/D", d_epoch_loss, epoch)
                 self.writer.add_scalar("LR/G", g_lr, epoch)
                 self.writer.add_scalar("LR/D", d_lr, epoch)
+                if self.cfg.use_replay_buffer:
+                    self.writer.add_scalar("Replay/buffer_size", len(self.replay_buffer), epoch)
 
             # CSV logging
             self.csv_logger.log_row({

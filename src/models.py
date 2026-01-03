@@ -27,31 +27,46 @@ def get_simple_gan(input_shape=[1, 28, 28], codings_dim = 30, device=default_dev
     return generator, discriminator
 
 
-def get_deep_convolutional_gan(input_shape=[1, 28, 28], codings_dim = 100, device=default_device()):
+def get_deep_convolutional_gan(input_shape=[1, 28, 28], codings_dim = 100, feature_maps=8, device=default_device()):
     C, H, W = input_shape
-    tiny_dim = H // 4  # assuming H and W are divisible by 4
+    tiny_H, tiny_W = H // 4, W // 4  # assuming H and W are divisible by 4
+    
     generator = nn.Sequential(
-        nn.Linear(codings_dim, 128 * tiny_dim * tiny_dim, bias=False),
-        nn.Unflatten(dim=1, unflattened_size=(128, tiny_dim, tiny_dim)),
-        nn.BatchNorm2d(128),
+        nn.Linear(codings_dim, feature_maps * 8 * tiny_H * tiny_W, bias=False),
+        nn.Unflatten(dim=1, unflattened_size=(feature_maps * 8, tiny_H, tiny_W)),
+        nn.BatchNorm2d(feature_maps * 8),
         nn.ReLU(),
-        nn.ConvTranspose2d(128, 64, kernel_size=3, stride=2, padding=1, output_padding=1, bias=False),
-        nn.BatchNorm2d(64), 
+
+        nn.ConvTranspose2d(feature_maps * 8, feature_maps * 4, kernel_size=3, stride=2, padding=1, output_padding=1, bias=False),
+        nn.BatchNorm2d(feature_maps * 4), 
         nn.ReLU(),
-        nn.ConvTranspose2d(64, C, kernel_size=3, stride=2, padding=1, output_padding=1, bias=False), 
+
+        nn.ConvTranspose2d(feature_maps * 4, feature_maps * 2, kernel_size=3, stride=2, padding=1, output_padding=1, bias=False), 
+        nn.BatchNorm2d(feature_maps * 2),
+        nn.ReLU(),
+
+        nn.ConvTranspose2d(feature_maps * 2, C, kernel_size=5, stride=1, padding=2),
         nn.Tanh()
     ).to(device)
+
     discriminator = nn.Sequential(
-        nn.Conv2d(C, 32, kernel_size=5, stride=2, padding=2, bias=False), 
-        nn.BatchNorm2d(32), 
-        nn.LeakyReLU(negative_slope=0.2),  # 32 x 14 x 14
+        nn.Conv2d(C, feature_maps * 2, kernel_size=5, stride=1, padding=2, bias=False), 
+        nn.BatchNorm2d(feature_maps * 2), 
+        nn.LeakyReLU(negative_slope=0.2),  # 32 x 28 x 28
+
         nn.Dropout(0.2),
-        nn.Conv2d(32, 64, kernel_size=3, stride=2, padding=1, bias=False), 
-        nn.BatchNorm2d(64),
+        nn.Conv2d(feature_maps * 2, feature_maps * 4, kernel_size=3, stride=2, padding=1, bias=False), 
+        nn.BatchNorm2d(feature_maps * 4),
+        nn.LeakyReLU(negative_slope=0.2),  # 32 x 14 x 14
+
+        nn.Dropout(0.2),
+        nn.Conv2d(feature_maps * 4, feature_maps * 8, kernel_size=3, stride=2, padding=1, bias=False), 
+        nn.BatchNorm2d(feature_maps * 8),
         nn.LeakyReLU(negative_slope=0.2),  # 64 x 7 x 7
+
         nn.Dropout(0.2),
         nn.Flatten(),
-        nn.Linear(64 * tiny_dim * tiny_dim, 1), 
+        nn.Linear(feature_maps * 8 * tiny_H * tiny_W, 1), 
         nn.Sigmoid()
     ).to(device)
 
