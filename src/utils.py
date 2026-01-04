@@ -1,8 +1,11 @@
+import math
 import random
 from collections import deque
 from typing import Dict, Optional, Any, Tuple, List
+from functools import partial
 
 import torch
+import torch.nn.functional as F
 from torch import nn
 from torch.optim import Optimizer
 
@@ -182,3 +185,173 @@ class GANProbabilisticReplayBuffer:
         out_labels = torch.stack(out_labels).to(device) if out_labels is not None else None
 
         return out_imgs, out_labels
+
+
+# Equalized Learning Rate
+class EqualizedLinear(nn.Module):
+    def __init__(self, in_dim, out_dim, lr_mul=1.0):
+        super().__init__()
+        self.weight = nn.Parameter(torch.randn(out_dim, in_dim))
+        self.bias = nn.Parameter(torch.zeros(out_dim))
+        self.scale = math.sqrt(2 / in_dim) * lr_mul
+        self.lr_mul = lr_mul
+
+    def forward(self, x):
+        return F.linear(x, self.weight * self.scale, self.bias * self.lr_mul)
+
+
+class PixelNorm(nn.Module):
+    def forward(self, x, eps=1e-8):
+        return x / torch.sqrt(torch.mean(x**2, dim=1, keepdim=True) + eps)
+
+
+class MappingNetwork1(nn.Module):
+    def __init__(self, z_dim=512, w_dim=512, n_layers=8):
+        super().__init__()
+        layers = [PixelNorm()]
+        for _ in range(n_layers):
+            layers.append(EqualizedLinear(z_dim, w_dim))
+            layers.append(nn.LeakyReLU(0.2))
+            z_dim = w_dim
+        self.net = nn.Sequential(*layers)
+
+    def forward(self, z):
+        return self.net(z)
+
+
+class AdaIN(nn.Module):
+    def __init__(self, channels, w_dim):
+        super().__init__()
+        self.style = EqualizedLinear(w_dim, channels * 2)
+
+    def forward(self, x, w):
+        style = self.style(w)
+        scale, bias = style.chunk(2, dim=1)
+        scale = scale.view(-1, x.size(1), 1, 1)
+        bias = bias.view(-1, x.size(1), 1, 1)
+
+        x = F.instance_norm(x) # it standrizes each feature map independently(by subtracting the feature map's mean and dividing by its standard deviation)
+        return scale * x + bias # using style vector to determine the scale and offset of each feature map
+
+
+class NoiseInjection(nn.Module):
+    def __init__(self, channels):
+        super().__init__()
+        self.weight = nn.Parameter(torch.zeros(1, channels, 1, 1))
+
+    def forward(self, x, noise=None):
+        if noise is None:
+            noise = torch.randn(x.size(0), 1, x.size(2), x.size(3), device=x.device)
+        return x + self.weight * noise
+
+
+class StyledConv(nn.Module):
+    def __init__(self, in_ch, out_ch, w_dim):
+        super().__init__()
+        self.conv = nn.Conv2d(in_ch, out_ch, 3, padding=1)
+        self.noise = NoiseInjection(out_ch)
+        self.adain = AdaIN(out_ch, w_dim)
+        self.act = nn.LeakyReLU(0.2)
+        self.conv.apply(partial(init_weights_for_relu, relu_slope=0.2))
+
+    def forward(self, x, w):
+        x = self.conv(x)
+        x = self.noise(x)
+        x = self.adain(x, w)
+        return self.act(x)
+    
+
+class UpSample(nn.Module):
+    def forward(self, x, w):
+        return F.interpolate(x, scale_factor=2, mode="nearest")
+
+
+class MappingNetwork2(nn.Module):
+    def __init__(self, z_dim=512, w_dim=512, num_layers=8):
+        super().__init__()
+        layers = []
+        for _ in range(num_layers):
+            layers.append(nn.Linear(z_dim if _ == 0 else w_dim, w_dim))
+            layers.append(nn.LeakyReLU(0.2))
+        self.net = nn.Sequential(*layers)
+        self.apply(partial(init_weights_for_relu, relu_slope=0.2))
+
+    def forward(self, z: torch.Tensor) -> torch.Tensor:
+        z = z / z.norm(dim=1, keepdim=True)
+        return self.net(z)
+
+
+class ModulatedConv2d(nn.Module):
+    def __init__(self, in_c, out_c, k, w_dim):
+        super().__init__()
+        self.weight = nn.Parameter(torch.randn(1, out_c, in_c, k, k))
+        self.affine = nn.Linear(w_dim, in_c)
+        self.eps = 1e-8
+        self.padding = k // 2
+
+    def forward(self, x, w):
+        B, C, H, W = x.shape
+        style = self.affine(w).view(B, 1, C, 1, 1)
+        weight = self.weight * (style + 1)
+
+        demod = torch.rsqrt(weight.pow(2).sum([2,3,4]) + self.eps)
+        weight = weight * demod.view(B, -1, 1, 1, 1)
+
+        x = x.view(1, B*C, H, W)
+        weight = weight.view(B * weight.size(1), C, *weight.shape[3:])
+        out = F.conv2d(x, weight, padding=self.padding, groups=B)
+        return out.view(B, -1, H, W)
+
+
+class StyleBlock2(nn.Module):
+    def __init__(self, in_c, out_c, w_dim):
+        super().__init__()
+        self.conv = ModulatedConv2d(in_c, out_c, 3, w_dim)
+        self.noise = NoiseInjection(out_c)
+        self.act = nn.LeakyReLU(0.2)
+
+    def forward(self, x, w):
+        x = self.conv(x, w)
+        x = self.noise(x)
+        return self.act(x)
+
+
+class DiscriminatorBlock(nn.Module):
+    def __init__(self, in_c, out_c):
+        super().__init__()
+        self.conv1 = nn.Conv2d(in_c, in_c, 3, padding=1)
+        self.conv2 = nn.Conv2d(in_c, out_c, 3, padding=1)
+        self.down = nn.AvgPool2d(2)
+
+    def forward(self, x):
+        x = F.leaky_relu(self.conv1(x), 0.2)
+        x = F.leaky_relu(self.conv2(x), 0.2)
+        return self.down(x)
+
+
+def d_loss(real, fake):
+    return F.softplus(fake).mean() + F.softplus(-real).mean()
+
+def g_loss(fake):
+    return F.softplus(-fake).mean()
+
+def r1_penalty(real_img, real_pred):
+    grad = torch.autograd.grad(
+        outputs=real_pred.sum(),
+        inputs=real_img,
+        create_graph=True
+    )[0]
+    return grad.pow(2).view(grad.size(0), -1).sum(1).mean()
+
+def path_length_regularization(fake_img, w):
+    noise = torch.randn_like(fake_img) / math.sqrt(fake_img.numel())
+    grad = torch.autograd.grad(
+        outputs=(fake_img * noise).sum(),
+        inputs=w,
+        create_graph=True
+    )[0]
+    return grad.pow(2).mean()
+
+
+if __name__=="__main__":
+    pass

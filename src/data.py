@@ -71,7 +71,7 @@ def load_fashion_mnist(batch_size = 32, shuffle = True, normal=True, conditional
 
     return data_loader
 
-def load_cifar10(batch_size = 32, shuffle = True, normal=True, conditional=False, seed = None) -> DataLoader:
+def load_cifar(batch_size = 32, shuffle = True, normal=True, conditional=False, seed = None) -> DataLoader:
     """
     This is a dataset of 60,000 3x32x32 color training images, labeled over 10 categories. See more info at the CIFAR homepage.
 
@@ -110,10 +110,10 @@ def load_cifar10(batch_size = 32, shuffle = True, normal=True, conditional=False
 
     if conditional:
         data_loader = DataLoader(ConditionalGANDataset(entire_data), batch_size=batch_size,
-                                shuffle=shuffle, num_workers=2, prefetch_factor=2, persistent_workers=True)
+                                shuffle=shuffle, num_workers=4, prefetch_factor=4, persistent_workers=True)
     else:
         data_loader = DataLoader(GANDataset(entire_data), batch_size=batch_size,
-                                shuffle=shuffle, num_workers=2, prefetch_factor=2, persistent_workers=True)
+                                shuffle=shuffle, num_workers=4, prefetch_factor=4, persistent_workers=True)
 
     return data_loader
 

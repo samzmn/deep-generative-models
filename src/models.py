@@ -1,8 +1,12 @@
+import math
+
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
 from utils import default_device, init_weights_for_relu
-
+from utils import MappingNetwork1, StyledConv, UpSample
+from utils import MappingNetwork2, StyleBlock2, DiscriminatorBlock
 
 def get_simple_gan(input_shape=[1, 28, 28], codings_dim = 30, device=default_device()):
     C, H, W = input_shape
@@ -155,29 +159,169 @@ class ConditionalDiscriminator(nn.Module):
         return self.net(x)
 
 
+class StyleGANGenerator1(nn.Module):
+    def __init__(self, img_shape=[1, 32, 32], w_dim=512, base_channels=512):
+        super().__init__()
+
+        img_channels = img_shape[0]
+        img_size = img_shape[1]
+        self.log_size = int(math.log2(img_size))
+        self.mapping = MappingNetwork1(w_dim, w_dim)
+
+        self.constant = nn.Parameter(torch.ones(1, base_channels, 4, 4)) # torch.randn(1, base_channels, 4, 4)
+
+        self.synthesis = nn.ModuleList([
+            StyledConv(base_channels, base_channels, w_dim),
+            StyledConv(base_channels, base_channels, w_dim)
+        ])
+
+        spatial_sizes = [2 ** x for x in range(self.log_size + 1) if x > 2] # [8, 16, 32]
+        channels = {
+            8: base_channels // 2,
+            16: base_channels // 4,
+            32: base_channels // 8,
+            64: base_channels // 16,
+            128: base_channels // 32,
+            256: base_channels // 64,
+            512: base_channels // 128,
+            1024: base_channels // 256
+        }
+
+        in_ch = base_channels
+        for res in spatial_sizes:
+            out_ch = channels[res]
+            self.synthesis.append(UpSample()),
+            self.synthesis.append(StyledConv(in_ch, out_ch, w_dim))
+            self.synthesis.append(StyledConv(out_ch, out_ch, w_dim))
+            in_ch = out_ch
+
+        self.to_rgb = nn.Sequential(
+            nn.Conv2d(out_ch, img_channels, 1),
+            nn.Tanh()
+        )
+        nn.init.xavier_normal_(self.to_rgb[0].weight)
+
+    def forward(self, z):
+        w = self.mapping(z)
+        x = self.constant.repeat(z.size(0), 1, 1, 1)
+
+        for layer in self.synthesis:
+            x = layer(x, w)
+        rgb = self.to_rgb(x)
+
+        return rgb
+
+
+class StyleGANDiscriminator1(nn.Module):
+    def __init__(self, img_shape=[3, 32, 32], feature_maps=32):
+        super().__init__()
+
+        self.net = nn.Sequential(
+            nn.Conv2d(img_shape[0], feature_maps, kernel_size=5, stride=1, padding=2, bias=False),
+            nn.BatchNorm2d(feature_maps),
+            nn.LeakyReLU(0.2),
+
+            nn.Conv2d(feature_maps, feature_maps * 2, kernel_size=3, stride=2, padding=1, bias=False),
+            nn.BatchNorm2d(feature_maps * 2),
+            nn.LeakyReLU(0.2),
+
+            nn.Conv2d(feature_maps * 2, feature_maps * 4, kernel_size=3, stride=2, padding=1, bias=False),
+            nn.BatchNorm2d(feature_maps * 4),
+            nn.LeakyReLU(0.2),
+
+            nn.Conv2d(feature_maps * 4, feature_maps * 8, kernel_size=3, stride=2, padding=1, bias=False),
+            nn.BatchNorm2d(feature_maps * 8),
+            nn.LeakyReLU(0.2),
+
+            nn.Flatten(),
+            nn.Linear(feature_maps * 8 * img_shape[1] * img_shape[2] // 64, 1), 
+        )
+
+        for layer in self.net[0:-2]:
+            init_weights_for_relu(layer)
+
+        nn.init.xavier_normal_(self.net[-1].weight)
+
+    def forward(self, x):
+        return self.net(x)
+    
+
+class StyleGANGenerator2(nn.Module):
+    def __init__(self, z_dim=512, w_dim=512):
+        super().__init__()
+        self.mapping = MappingNetwork2(z_dim, w_dim)
+        self.const = nn.Parameter(torch.randn(1, 512, 4, 4))
+
+        self.blocks = nn.ModuleList([
+            StyleBlock2(512, 512, w_dim),
+            StyleBlock2(512, 256, w_dim),
+            StyleBlock2(256, 128, w_dim),
+            StyleBlock2(128, 64, w_dim),
+        ])
+
+        self.to_rgb = nn.ModuleList([
+            nn.Conv2d(512, 3, 1),
+            nn.Conv2d(256, 3, 1),
+            nn.Conv2d(128, 3, 1),
+            nn.Conv2d(64, 3, 1),
+        ])
+
+    def forward(self, z):
+        w = self.mapping(z)
+        x = self.const.repeat(z.size(0), 1, 1, 1)
+
+        rgb = None
+        for i, block in enumerate(self.blocks):
+            if i > 0:
+                x = F.interpolate(x, scale_factor=2, mode="bilinear")
+                rgb = F.interpolate(rgb, scale_factor=2, mode="bilinear")
+
+            x = block(x, w)
+            rgb_new = self.to_rgb[i](x)
+            rgb = rgb_new if rgb is None else rgb + rgb_new
+
+        return torch.tanh(rgb)
+
+
+class StyleGANDiscriminator2(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.blocks = nn.ModuleList([
+            DiscriminatorBlock(3, 64),
+            DiscriminatorBlock(64, 128),
+            DiscriminatorBlock(128, 256),
+            # DiscriminatorBlock(256, 512),
+        ])
+        self.final = nn.Linear(256*4*4, 1)
+
+    def forward(self, x):
+        for block in self.blocks:
+            x = block(x)
+        x = x.view(x.size(0), -1)
+        return self.final(x)
+
+
 def test():
     import utils
     import data
     device = utils.default_device()
     batch_size = 64
-    codings_dim = 100
-    data_loader = data.load_fashion_mnist(batch_size=batch_size, shuffle=True, conditional=True)
-    generator = ConditionalGenerator(codings_dim=codings_dim, num_classes=10, img_shape=[1, 28, 28]).to(device)
-    discriminator = ConditionalDiscriminator(num_classes=10, img_shape=[1, 28, 28]).to(device)
+    data_loader = data.load_cifar(batch_size)
+    generator = StyleGANGenerator2()
+    discriminator = StyleGANDiscriminator2()
     generator.eval()
     discriminator.eval()
-    for x_batch, y_batch in data_loader:
-        x_batch = x_batch.to(device)
-        y_batch = y_batch.to(device)
-        print(x_batch.shape)
-        codings = utils.normal_noise_sampler(batch_size, codings_dim).to(device)
-        with torch.no_grad():
-            generated_images = generator(codings, y_batch)
-        print(generated_images.shape)
-        with torch.no_grad():
-            d_outputs = discriminator(x_batch, y_batch)
-        print(d_outputs.shape)
-        break
+    with torch.no_grad():
+        x_batch = torch.rand(batch_size, 3, 32, 32)
+        y = discriminator(x_batch)
+        print(y.shape)
+
+        x_batch = torch.rand(batch_size, 512)
+        y = generator(x_batch)
+        print(y.shape)
+
+        y = discriminator(y)
+        print(y.shape)
 
 if __name__ == "__main__":
     test()

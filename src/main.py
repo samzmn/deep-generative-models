@@ -16,7 +16,7 @@ def train_fashion_simple_gan(batch_size = 64, codings_dim = 30, g_lr = 1e-3, d_l
     discriminator_opt = torch.optim.NAdam(discriminator.parameters(), lr=d_lr)
     criterion = nn.BCELoss()
     early_stopping = train.EarlyStoppingConfig()
-    train_config = train.TrainerConfig(out_dir="./", seed=42, epochs=100, device=device)
+    train_config = train.TrainerConfig(out_dir="./", seed=seed, epochs=100, device=device)
     trainer = train.GANTrainer(generator, discriminator, model_name="simple_gan", dataset_name="fashion_mnist",
                                codings_dim=codings_dim, criterion=criterion, g_optimizer=generator_opt, d_optimizer=discriminator_opt,
                                train_dataloader=data_loader, trainer_cfg=train_config, early_stopping=early_stopping)
@@ -31,11 +31,11 @@ def train_fashion_deep_convolutional_gan(batch_size = 64, codings_dim = 100, g_l
     device = utils.default_device()
     data_loader = data.load_fashion_mnist(batch_size=batch_size, shuffle=True, seed=seed)
     generator, discriminator = models.get_deep_convolutional_gan(input_shape=[1, 28, 28], codings_dim=codings_dim, device=device)
-    generator_opt = torch.optim.NAdam(generator.parameters(), lr=g_lr, betas=(0.5, 0.999))
-    discriminator_opt = torch.optim.NAdam(discriminator.parameters(), lr=d_lr, betas=(0.5, 0.999))
+    generator_opt = torch.optim.NAdam(generator.parameters(), lr=g_lr)
+    discriminator_opt = torch.optim.NAdam(discriminator.parameters(), lr=d_lr)
     criterion = nn.BCELoss()
     early_stopping = train.EarlyStoppingConfig()
-    train_config = train.TrainerConfig(out_dir="./", seed=42, epochs=100, device=device, use_tensorboard=False)
+    train_config = train.TrainerConfig(out_dir="./", seed=seed, epochs=100, device=device, use_tensorboard=False)
     trainer = train.GANTrainer(generator, discriminator, model_name="deep_conv_gan", dataset_name="fashion_mnist",
                                codings_dim=codings_dim, criterion=criterion, g_optimizer=generator_opt, d_optimizer=discriminator_opt,
                                train_dataloader=data_loader, trainer_cfg=train_config, early_stopping=early_stopping)
@@ -54,7 +54,7 @@ def train_fashion_deep_conv_gan_with_replay_buffer(batch_size = 64, codings_dim 
     discriminator_opt = torch.optim.NAdam(discriminator.parameters(), lr=d_lr)
     criterion = nn.BCELoss()
     early_stopping = train.EarlyStoppingConfig()
-    train_config = train.TrainerConfig(out_dir="./", seed=42, epochs=100, device=device, use_tensorboard=False,
+    train_config = train.TrainerConfig(out_dir="./", seed=seed, epochs=100, device=device, use_tensorboard=False,
                                        use_replay_buffer=True, replay_buffer_size=5000, replay_ratio=1.0)
     trainer = train.GANTrainer(generator, discriminator, model_name="deep_conv_gan_with_replay_buffer", dataset_name="fashion_mnist",
                                codings_dim=codings_dim, criterion=criterion, g_optimizer=generator_opt, d_optimizer=discriminator_opt,
@@ -75,7 +75,7 @@ def train_fashion_conditional_dcgan(batch_size = 64, codings_dim = 100, g_lr = 1
     discriminator_opt = torch.optim.NAdam(discriminator.parameters(), lr=d_lr)
     criterion = nn.BCEWithLogitsLoss()
     early_stopping = train.EarlyStoppingConfig(monitor="g_loss", mode="min", patience=20)
-    train_config = train.TrainerConfig(out_dir=".", seed=42, epochs=100, device=device, use_tensorboard=False)
+    train_config = train.TrainerConfig(out_dir=".", seed=seed, epochs=100, device=device, use_tensorboard=False)
     trainer = train.GANTrainer(generator, discriminator, model_name="conditional_dcgan", dataset_name="fashion_mnist", num_classes=10,
                                codings_dim=codings_dim, criterion=criterion, g_optimizer=generator_opt, d_optimizer=discriminator_opt,
                                train_dataloader=data_loader, trainer_cfg=train_config, early_stopping=early_stopping)
@@ -95,7 +95,7 @@ def train_fashion_conditional_dcgan_with_replay_buffer(batch_size = 64, codings_
     discriminator_opt = torch.optim.NAdam(discriminator.parameters(), lr=d_lr)
     criterion = nn.BCEWithLogitsLoss()
     early_stopping = train.EarlyStoppingConfig(monitor="g_loss", mode="min", patience=20)
-    train_config = train.TrainerConfig(out_dir=".", seed=42, epochs=100, device=device, use_tensorboard=False,
+    train_config = train.TrainerConfig(out_dir=".", seed=seed, epochs=100, device=device, use_tensorboard=False,
                                        use_replay_buffer=True, replay_buffer_size=5000, replay_ratio=1.0)
     trainer = train.GANTrainer(generator, discriminator, 
                                model_name="conditional_dcgan_with_replay_buffer", dataset_name="fashion_mnist", num_classes=10,
@@ -108,12 +108,54 @@ def train_fashion_conditional_dcgan_with_replay_buffer(batch_size = 64, codings_
                         save_path="./images/generated_fashion_mnist_with_conditional_dcgan_with_replay_buffer.png")
 
 
+def train_cifar_style_gan_1(batch_size = 32, codings_dim = 512, g_lr = 1e-3, d_lr = 5e-4, seed = 42):
+    device = utils.default_device()
+    data_loader = data.load_cifar(batch_size=batch_size, shuffle=True, normal=True, seed=seed)
+    generator = models.StyleGANGenerator1(img_shape=[3, 32, 32], w_dim=codings_dim, base_channels=codings_dim)
+    discriminator = models.StyleGANDiscriminator1(img_shape=[3, 32, 32], feature_maps=64)
+    generator_opt = torch.optim.NAdam(generator.parameters(), lr=g_lr)
+    discriminator_opt = torch.optim.NAdam(discriminator.parameters(), lr=d_lr)
+    criterion = nn.BCEWithLogitsLoss()
+    early_stopping = train.EarlyStoppingConfig(monitor="g_loss", mode="min", patience=20)
+    train_config = train.TrainerConfig(out_dir=".", seed=seed, epochs=100, device=device, use_tensorboard=False)
+    trainer = train.GANTrainer(generator, discriminator, model_name="style_gan_1", dataset_name="cifar",
+                               codings_dim=codings_dim, criterion=criterion, g_optimizer=generator_opt, d_optimizer=discriminator_opt,
+                               train_dataloader=data_loader, trainer_cfg=train_config, early_stopping=early_stopping)
+    result = trainer.train()
+    print("Best:", result["best_epoch"], result["best_metric"], result["checkpoint_path"])
+    utils.load_checkpoint(result["checkpoint_path"], generator, discriminator)
+    generate_new_images(generator, utils.normal_noise_sampler, codings_dim, device,
+                        save_path="./images/generated_cifar_with_style_gan_1.png")
+    
+
+def train_cifar_style_gan_2(batch_size = 64, codings_dim = 512, g_lr = 1e-3, d_lr = 5e-4, seed = 42):
+    device = utils.default_device()
+    data_loader = data.load_cifar(batch_size=batch_size, shuffle=True, normal=True, seed=seed)
+    generator = models.StyleGANGenerator2(w_dim=codings_dim, z_dim=codings_dim)
+    discriminator = models.StyleGANDiscriminator2()
+    generator_opt = torch.optim.NAdam(generator.parameters(), lr=g_lr)
+    discriminator_opt = torch.optim.NAdam(discriminator.parameters(), lr=d_lr)
+    criterion = nn.BCEWithLogitsLoss()
+    early_stopping = train.EarlyStoppingConfig(monitor="g_loss", mode="min", patience=20)
+    train_config = train.TrainerConfig(out_dir=".", seed=seed, epochs=100, device=device, use_tensorboard=False)
+    trainer = train.GANTrainer(generator, discriminator, model_name="style_gan_2", dataset_name="cifar",
+                               codings_dim=codings_dim, criterion=criterion, g_optimizer=generator_opt, d_optimizer=discriminator_opt,
+                               train_dataloader=data_loader, trainer_cfg=train_config, early_stopping=early_stopping)
+    result = trainer.train()
+    print("Best:", result["best_epoch"], result["best_metric"], result["checkpoint_path"])
+    utils.load_checkpoint(result["checkpoint_path"], generator, discriminator)
+    generate_new_images(generator, utils.normal_noise_sampler, codings_dim, device,
+                        save_path="./images/generated_cifar_with_style_gan_2.png")
+    
+
 def main():
     # train_fashion_simple_gan()
     # train_fashion_deep_convolutional_gan()
     # train_fashion_conditional_dcgan()
     # train_fashion_deep_conv_gan_with_replay_buffer()
-    train_fashion_conditional_dcgan_with_replay_buffer()
+    # train_fashion_conditional_dcgan_with_replay_buffer()
+    # train_cifar_style_gan_1()
+    train_cifar_style_gan_2()
 
 if __name__ == "__main__":
     main()

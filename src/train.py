@@ -34,9 +34,9 @@ class TrainerConfig:
     use_tensorboard: bool = True
     log_every_n_steps: Optional[int] = 100
     plot_every_n_epochs: Optional[int] = 1
-    use_replay_buffer: bool = False,
-    replay_buffer_size: int = 10_000,
-    replay_ratio: float = 1.0,  # fraction of fake batch from buffer
+    use_replay_buffer: bool = False
+    replay_buffer_size: int = 10_000
+    replay_ratio: float = 1.0
     clip_grad_norm: Optional[float] = None
     seed: Optional[int] = None
 
@@ -75,7 +75,7 @@ class GANTrainer:
         noise_sampler: Callable[[int, int], torch.Tensor] | Any = normal_noise_sampler,  # returns latent z (and optionally cond)
         g_scheduler: Optional[LRScheduler] = None,   # torch.optim.lr_scheduler.LRScheduler
         d_scheduler: Optional[LRScheduler] = None,
-        trainer_cfg: TrainerConfig = TrainerConfig(epochs=50, device=torch.device("cuda"), out_dir="./runs"),
+        trainer_cfg: TrainerConfig = TrainerConfig(epochs=50, device=torch.device("cuda"), out_dir="./"),
         early_stopping: Optional[EarlyStoppingConfig] = EarlyStoppingConfig(),
         num_classes: Optional[int] = None, # must be set for conditional GANs
     ):
@@ -217,10 +217,10 @@ class GANTrainer:
 
                 pred_real = self.D(real_imgs) if labels is None else self.D(real_imgs, labels)
                 pred_fake = self.D(fake_imgs) if labels is None else self.D(fake_imgs, labels)
-                # ones = torch.ones(batch_size, 1, device=device)
-                # zeros = torch.zeros(batch_size, 1, device=device)
-                ones = torch.empty(batch_size, 1, device=device).uniform_(0.9, 1.0)
-                zeros = torch.empty(batch_size, 1, device=device).uniform_(0.0, 0.1)
+                ones = torch.ones(batch_size, 1, device=device)
+                zeros = torch.zeros(batch_size, 1, device=device)
+                # ones = torch.empty(batch_size, 1, device=device).uniform_(0.9, 1.0)
+                # zeros = torch.empty(batch_size, 1, device=device).uniform_(0.0, 0.1)
 
                 d_loss = self.criterion(pred_real, ones) + self.criterion(pred_fake, zeros)
                 d_loss.backward()

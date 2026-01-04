@@ -1,6 +1,5 @@
 import os
 from pathlib import Path
-import numpy as np
 import torch
 import matplotlib.pyplot as plt
 
@@ -34,7 +33,7 @@ def plot_image(image):
         img = img.squeeze(0) 
         plt.imshow(img, cmap="binary") 
     else: 
-        plt.imshow(img.permute(1, 2, 0))
+        plt.imshow(img.permute(1, 2, 0), cmap="binary")
     plt.axis("off")
 
 def plot_multiple_images(images, n_cols=None, save_path: str | None = None):
@@ -58,3 +57,15 @@ def generate_new_images(generator: torch.nn.Module, sampler, codings_dim, device
     with torch.no_grad():
         generated_images = generator(codings) if num_classes is None else generator(codings, random_labels)
     plot_multiple_images(generated_images, 8, save_path=save_path)
+
+def test():
+    import data
+    dataset = data.load_cifar(batch_size=64)
+    for x in dataset:
+        plot_multiple_images(x, 8)
+        plt.show()
+        break
+
+if __name__=="__main__":
+    test()
+    
